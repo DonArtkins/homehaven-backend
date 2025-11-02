@@ -2,13 +2,11 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  username: {
+  name: {
     type: String,
     required: true,
-    unique: true,
     trim: true,
-    minlength: 3,
-    maxlength: 30
+    maxlength: 100
   },
   email: {
     type: String,
@@ -17,19 +15,31 @@ const userSchema = new mongoose.Schema({
     trim: true,
     lowercase: true
   },
+  phone: {
+    type: String,
+    required: true,
+    trim: true
+  },
   password: {
     type: String,
     required: true,
-    minlength: 6
+    minlength: 8
   },
   role: {
     type: String,
-    enum: ['user', 'admin'],
+    enum: ['user', 'admin', 'super_admin'],
     default: 'user'
   },
   isActive: {
     type: Boolean,
     default: true
+  },
+  googleId: {
+    type: String,
+    sparse: true
+  },
+  avatar: {
+    type: String
   }
 }, {
   timestamps: true
@@ -40,7 +50,7 @@ userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
   
   try {
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(12);
     this.password = await bcrypt.hash(this.password, salt);
     next();
   } catch (error) {
@@ -53,23 +63,17 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
-// Create default admin user if doesn't exist
-userSchema.statics.createDefaultAdmin = async function() {
-  try {
-    const adminExists = await this.findOne({ role: 'admin' });
-    if (!adminExists) {
-      const adminUser = new this({
-        username: 'admin',
-        email: 'admin@example.com',
-        password: 'admin123', // Change this in production!
-        role: 'admin'
-      });
-      await adminUser.save();
-      console.log('Default admin user created');
+// Normalize phone number before saving
+userSchema.pre('save', function(next) {
+  if (this.phone && this.isModified('phone')) {
+    // Convert 07*** to +2547***
+    if (this.phone.startsWith('07') && this.phone.length === 10) {
+      this.phone = '+254' + this.phone.substring(1);
     }
-  } catch (error) {
-    console.error('Error creating default admin:', error);
+    // Remove any spaces or special characters
+    this.phone = this.phone.replace(/\s+/g, '').replace(/[^\d+]/g, '');
   }
-};
+  next();
+});
 
 module.exports = mongoose.model('User', userSchema);
