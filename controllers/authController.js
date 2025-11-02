@@ -5,24 +5,56 @@ const authController = {
   // Register new user
   register: async (req, res) => {
     try {
-      const { username, email, password } = req.body;
+      const { name, email, phone, password, confirmPassword } = req.body;
+
+      // Validation checks
+      if (!name || !email || !phone || !password || !confirmPassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'All fields are required'
+        });
+      }
+
+      if (password !== confirmPassword) {
+        return res.status(400).json({
+          success: false,
+          message: 'Passwords do not match'
+        });
+      }
+
+      if (password.length < 8) {
+        return res.status(400).json({
+          success: false,
+          message: 'Password must be at least 8 characters long'
+        });
+      }
+
+      // Validate phone format
+      const phoneRegex = /^(\+2547\d{8}|07\d{8})$/;
+      if (!phoneRegex.test(phone.replace(/\s+/g, ''))) {
+        return res.status(400).json({
+          success: false,
+          message: 'Phone number must be in format: 0712345678 or +254712345678'
+        });
+      }
 
       // Check if user already exists
       const existingUser = await User.findOne({
-        $or: [{ email }, { username }]
+        $or: [{ email }, { phone }]
       });
 
       if (existingUser) {
         return res.status(400).json({
           success: false,
-          message: 'User with this email or username already exists'
+          message: 'User with this email or phone already exists'
         });
       }
 
-      // Create new user (role will default to 'user')
+      // Create new user
       const user = new User({
-        username,
+        name,
         email,
+        phone,
         password
       });
 
@@ -37,14 +69,16 @@ const authController = {
         data: {
           user: {
             id: user._id,
-            username: user.username,
+            name: user.name,
             email: user.email,
+            phone: user.phone,
             role: user.role
           },
           token
         }
       });
     } catch (error) {
+      console.error('Registration error:', error);
       res.status(500).json({
         success: false,
         message: 'Error registering user',
@@ -58,12 +92,19 @@ const authController = {
     try {
       const { email, password } = req.body;
 
+      if (!email || !password) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email and password are required'
+        });
+      }
+
       // Find user by email
       const user = await User.findOne({ email, isActive: true });
       if (!user) {
         return res.status(401).json({
           success: false,
-          message: 'Invalid credentials'
+          message: 'Invalid email or password'
         });
       }
 
@@ -72,7 +113,7 @@ const authController = {
       if (!isMatch) {
         return res.status(401).json({
           success: false,
-          message: 'Invalid credentials'
+          message: 'Invalid email or password'
         });
       }
 
@@ -85,18 +126,55 @@ const authController = {
         data: {
           user: {
             id: user._id,
-            username: user.username,
+            name: user.name,
             email: user.email,
+            phone: user.phone,
             role: user.role
           },
           token,
-          redirectTo: user.role === 'admin' ? '/admin/dashboard' : '/user/dashboard'
+          redirectTo: user.role === 'admin' || user.role === 'super_admin' 
+            ? '/admin/dashboard' 
+            : '/user/dashboard'
         }
       });
     } catch (error) {
+      console.error('Login error:', error);
       res.status(500).json({
         success: false,
         message: 'Error logging in',
+        error: error.message
+      });
+    }
+  },
+
+  // Google OAuth callback
+  googleCallback: async (req, res) => {
+    try {
+      const token = authService.generateToken(req.user);
+      
+      res.json({
+        success: true,
+        message: 'Google authentication successful',
+        data: {
+          user: {
+            id: req.user._id,
+            name: req.user.name,
+            email: req.user.email,
+            phone: req.user.phone,
+            role: req.user.role,
+            avatar: req.user.avatar
+          },
+          token,
+          redirectTo: req.user.role === 'admin' || req.user.role === 'super_admin' 
+            ? '/admin/dashboard' 
+            : '/user/dashboard'
+        }
+      });
+    } catch (error) {
+      console.error('Google OAuth error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Google authentication failed',
         error: error.message
       });
     }
@@ -122,27 +200,27 @@ const authController = {
   // Update user profile
   updateProfile: async (req, res) => {
     try {
-      const { username, email } = req.body;
+      const { name, email, phone } = req.body;
       const userId = req.user.id;
 
-      // Check if email or username is already taken by another user
+      // Check if email or phone is already taken by another user
       const existingUser = await User.findOne({
         $and: [
           { _id: { $ne: userId } },
-          { $or: [{ email }, { username }] }
+          { $or: [{ email }, { phone }] }
         ]
       });
 
       if (existingUser) {
         return res.status(400).json({
           success: false,
-          message: 'Email or username already taken'
+          message: 'Email or phone already taken'
         });
       }
 
       const updatedUser = await User.findByIdAndUpdate(
         userId,
-        { username, email },
+        { name, email, phone },
         { new: true, runValidators: true }
       ).select('-password');
 
@@ -164,8 +242,6 @@ const authController = {
   deleteAccount: async (req, res) => {
     try {
       const userId = req.user.id;
-
-      // Soft delete by setting isActive to false
       await User.findByIdAndUpdate(userId, { isActive: false });
 
       res.json({
@@ -181,7 +257,7 @@ const authController = {
     }
   },
 
-  // Logout (client-side token removal, this is for completeness)
+  // Logout
   logout: (req, res) => {
     res.json({
       success: true,
